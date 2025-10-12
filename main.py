@@ -1,8 +1,11 @@
 from typing import Dict, Tuple, Union
 import os
 
+from bio_utils.bio_files_processor import convert_multiline_fasta_to_oneline
 from bio_utils.fastq import is_within_bounds, calculate_gc_content, calculate_mean_quality, read_fastq_to_dict, \
     write_fastq
+from bio_utils.parse_blast_output import parse_blast_output
+
 from bio_utils.rna_dna_utils import is_nucleic_acid, transcribe, reverse, complement, reverse_complement
 
 
@@ -85,6 +88,15 @@ def filter_fastq(
 filter_fastq(
     'data/example_fastq.fastq',
     'filtered_out.fastq',
-(15, 100),
+    (15, 100),
     (10, 2 ** 32)
+)
+
+convert_multiline_fasta_to_oneline(
+    input_fasta='data/example_multiline_fasta.fasta',
+)
+
+parse_blast_output(
+    input_file='data/example_blast_results.txt',
+    output_file='parsed_blast_result.txt'
 )
