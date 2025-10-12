@@ -3,7 +3,8 @@ Module for FASTQ sequence processing.
 Includes functions for filtering FASTQ sequences by GC content, length, and quality.
 """
 
-from typing import Dict, Tuple, Union
+from typing import Dict, Tuple, Union, Iterator, TextIO
+
 
 def calculate_gc_content(seq: str) -> float:
     """
@@ -20,6 +21,7 @@ def calculate_gc_content(seq: str) -> float:
     gc_count = seq.count('G') + seq.count('C')
     return (gc_count / len(seq)) * 100
 
+
 def calculate_mean_quality(quality_str: str) -> float:
     """
     Calculates the mean Phred33 quality score of a FASTQ read.
@@ -34,6 +36,7 @@ def calculate_mean_quality(quality_str: str) -> float:
         return 0.0
     total_quality = sum(ord(char) - 33 for char in quality_str)
     return total_quality / len(quality_str)
+
 
 def is_within_bounds(value: float, bounds: Union[float, Tuple[float, float]]) -> bool:
     """
@@ -50,42 +53,44 @@ def is_within_bounds(value: float, bounds: Union[float, Tuple[float, float]]) ->
         return value <= bounds
     return bounds[0] <= value <= bounds[1]
 
-def filter_fastq(
-    seqs: Dict[str, Tuple[str, str]],
-    gc_bounds: Union[float, Tuple[float, float]] = (0, 100),
-    length_bounds: Union[int, Tuple[int, int]] = (0, 2**32),
-    quality_threshold: float = 0
-) -> Dict[str, Tuple[str, str]]:
+
+def read_fastq_to_dict(input_fastq: str) -> Dict[str, Tuple[str, str]]:
     """
-    Filters FASTQ sequences based on GC content, length, and quality thresholds.
+    Read a FASTQ file and return a dictionary of sequences.
 
     Arguments:
-        seqs: Dictionary of sequences {name: (sequence, quality)}.
-        gc_bounds: GC content range in percentage (single number or tuple).
-        length_bounds: Sequence length range (single number or tuple).
-        quality_threshold: Minimum average Phred33 quality score.
+        input_fastq: Path to the FASTQ file.
 
     Returns:
-        Dictionary with filtered sequences.
+        Dictionary with sequence names as keys and (sequence, quality) tuples as values.
     """
-    filtered_seqs = {}
+    seqs = {}
+    file = open(input_fastq, 'r')
+    while True:
+        name = file.readline().strip()
+        if not name:
+            break  # End of file
+        if not name.startswith('@'):
+            raise ValueError("Invalid FASTQ format: Expected '@' at start of name")
 
-    for name, (seq, qual) in seqs.items():
-        # Check sequence length
-        seq_length = len(seq)
-        if not is_within_bounds(seq_length, length_bounds):
-            continue
+        seq = file.readline().strip()
+        plus = file.readline().strip()
+        qual = file.readline().strip()
 
-        # Check GC content
-        gc_content = calculate_gc_content(seq)
-        if not is_within_bounds(gc_content, gc_bounds):
-            continue
+        if not plus.startswith('+') or len(seq) != len(qual):
+            raise ValueError("Invalid FASTQ format: Readline error")
 
-        # Check mean quality
-        mean_quality = calculate_mean_quality(qual)
-        if mean_quality < quality_threshold:
-            continue
+        seqs[name] = (seq, qual)
+    return seqs
 
-        # If all checks pass, add to result
-        filtered_seqs[name] = (seq, qual)
-    return filtered_seqs
+def write_fastq(output_path: str, seqs: Dict[str, Tuple[str, str]]) -> None:
+    """
+    Write sequences from a dictionary to a FASTQ file.
+
+    Arguments:
+        output_path: Path to the output FASTQ file.
+        seqs: Dictionary with sequence names as keys and (sequence, quality) tuples as values.
+    """
+    with open(output_path, 'w') as file:
+        for name, (seq, qual) in seqs.items():
+            file.write(f"{name}\n{seq}\n+\n{qual}\n")

@@ -1,5 +1,10 @@
-from bio_utils.fastq import filter_fastq
+from typing import Dict, Tuple, Union
+import os
+
+from bio_utils.fastq import is_within_bounds, calculate_gc_content, calculate_mean_quality, read_fastq_to_dict, \
+    write_fastq
 from bio_utils.rna_dna_utils import is_nucleic_acid, transcribe, reverse, complement, reverse_complement
+
 
 def run_dna_rna_tools(*args):
     if not args or len(args) < 2:
@@ -21,23 +26,65 @@ def run_dna_rna_tools(*args):
     results = [procedure_map[procedure](sequence) for sequence in sequences]
     return results[0] if len(results) == 1 else results
 
-# Sample FASTQ data: {name: (sequence, quality)}
-EXAMPLE_FASTQ = {
-    # 'name' : ('sequence', 'quality')
-    '@SRX079801': ('ACAGCAACATAAACATGATGGGATGGCGTAAGCCCCCGAGATATCAGTTTACCCAGGATAAGAGATTAAATTATGAGCAACATTATTAA', 'FGGGFGGGFGGGFGDFGCEBB@CCDFDDFFFFBFFGFGEFDFFFF;D@DD>C@DDGGGDFGDGG?GFGFEGFGGEF@FDGGGFGFBGGD'),
-    '@SRX079802': ('ATTAGCGAGGAGGAGTGCTGAGAAGATGTCGCCTACGCCGTTGAAATTCCCTTCAATCAGGGGGTACTGGAGGATACGAGTTTGTGTG', 'BFFFFFFFB@B@A<@D>BDDACDDDEBEDEFFFBFFFEFFDFFF=CC@DDFD8FFFFFFF8/+.2,@7<<:?B/:<><-><@.A*C>D'),
-    '@SRX079803': ('GAACGACAGCAGCTCCTGCATAACCGCGTCCTTCTTCTTTAGCGTTGTGCAAAGCATGTTTTGTATTACGGGCATCTCGAGCGAATC', 'DFFFEGDGGGGFGGEDCCDCEFFFFCCCCCB>CEBFGFBGGG?DE=:6@=>A<A>D?D8DCEE:>EEABE5D@5:DDCA;EEE-DCD'),
-    '@SRX079804': ('TGAAGCGTCGATAGAAGTTAGCAAACCCGCGGAACTTCCGTACATCAGACACATTCCGGGGGGTGGGCCAATCCATGATGCCTTTG', 'FF@FFBEEEEFFEFFD@EDEFFB=DFEEFFFE8FFE8EEDBFDFEEBE+E<C<C@FFFFF;;338<??D:@=DD:8DDDD@EE?EB'),
-    '@SRX079805': ('TAGGGTTGTATTTGCAGATCCATGGCATGCCAAAAAGAACATCGTCCCGTCCAATATCTGCAACATACCAGTTGGTTGGTA', '@;CBA=:@;@DBDCDEEE/EEEEEEF@>FBEEB=EFA>EEBD=DAEEEEB9)99>B99BC)@,@<9CDD=C,5;B::?@;A'),
-    '@SRX079806': ('CTGCCGAGACTGTTCTCAGACATGGAAAGCTCGATTCGCATACACTCGCTGAGTAAGAGAGTCACACCAAATCACAGATT', 'E;FFFEGFGIGGFBG;C6D<@C7CDGFEFGFHDFEHHHBBHHFDFEFBAEEEEDE@A2=DA:??C3<BCA7@DCDEG*EB'),
-    '@SRX079807': ('CATTATAGTAATACGGAAGATGACTTGCTGTTATCATTACAGCTCCATCGCATGAATAATTCTCTAATATAGTTGTCAT', 'HGHHHHGFHHHHFHHEHHHHFGEHFGFGGGHHEEGHHEEHBHHFGDDECEGGGEFGF<FGGIIGEBGDFFFGFFGGFGF'),
-    '@SRX079808': ('GACGCCGTGGCTGCACTATTTGAGGCACCTGTCCTCGAAGGGAAGTTCATCTCGACGCGTGTCACTATGACATGAATG', 'GGGGGFFCFEEEFFDGFBGGGA5DG@5DDCBDDE=GFADDFF5BE49<<<BDD?CE<A<8:59;@C.C9CECBAC=DE'),
-    '@SRX079809': ('GAACCTTCTTTAATTTATCTAGAGCCCAAATTTTAGTCAATCTATCAACTAAAATACCTACTGCTACTACAAGTATT', 'DACD@BEECEDE.BEDDDDD,>:@>EEBEEHEFEHHFFHH?FGBGFBBD77B;;C?FFFFGGFED.BBABBG@DBBE'),
-    '@SRX079810': ('CCTCAGCGTGGATTGCCGCTCATGCAGGAGCAGATAATCCCTTCGCCATCCCATTAAGCGCCGTTGTCGGTATTCC', 'FF@FFCFEECEBEC@@BBBBDFBBFFDFFEFFEB8FFFFFFFFEFCEB/>BBA@AFFFEEEEECE;ACD@DBBEEE'),
-    '@SRX079811': ('AGTTATTTATGCATCATTCTCATGTATGAGCCAACAAGATAGTACAAGTTTTATTGCTATGAGTTCAGTACAACA', '<<<=;@B??@<>@><48876EADEG6B<A@*;398@.=BB<7:>.BB@.?+98204<:<>@?A=@EFEFFFEEFB'),
-    '@SRX079812': ('AGTGAGACACCCCTGAACATTCCTAGTAAGACATCTTTGAATATTACTAGTTAGCCACACTTTAAAATGACCCG', '<98;<@@@:@CD@BCCDD=DBBCEBBAAA@9???@BCDBCGF=GEGDFGDBEEEEEFFFF=EDEE=DCD@@BBC')
-    }
 
-filtered = filter_fastq(seqs = EXAMPLE_FASTQ, gc_bounds=(0, 100), length_bounds=(2, 2**32), quality_threshold=30)
-for key, (name, qual) in filtered.items():
-    print("{"+key+"}: (" + name + ", " + qual + ")")
+def filter_fastq(
+        input_fastq: str,
+        output_fastq: str,
+        gc_bounds: Union[float, Tuple[float, float]] = (0, 100),
+        length_bounds: Union[int, Tuple[int, int]] = (0, 2 ** 32),
+        quality_threshold: float = 0
+) -> None:
+    """
+    Filters FASTQ sequences based on GC content, length, and quality thresholds.
+
+    Arguments:
+        seqs: Dictionary of sequences {name: (sequence, quality)}.
+        gc_bounds: GC content range in percentage (single number or tuple).
+        length_bounds: Sequence length range (single number or tuple).
+        quality_threshold: Minimum average Phred33 quality score.
+
+    Returns:
+        Dictionary with filtered sequences.
+    """
+
+    # Create filtered directory if it doesn't exist
+    output_dir = "filtered"
+    os.makedirs(output_dir, exist_ok=True)
+
+    output_path = os.path.join(output_dir, output_fastq)
+
+    # Read FASTQ file into dictionary
+    seqs = read_fastq_to_dict(input_fastq)
+
+    filtered_seqs = {}
+
+    for name, (seq, qual) in seqs.items():
+        # Check sequence length
+        seq_length = len(seq)
+        if not is_within_bounds(seq_length, length_bounds):
+            continue
+
+        # Check GC content
+        gc_content = calculate_gc_content(seq)
+        if not is_within_bounds(gc_content, gc_bounds):
+            continue
+
+        # Check mean quality
+        mean_quality = calculate_mean_quality(qual)
+        if mean_quality < quality_threshold:
+            continue
+
+        # If all checks pass, add to result
+        filtered_seqs[name] = (seq, qual)
+
+    write_fastq(
+        output_path, filtered_seqs
+    )
+
+
+filter_fastq(
+    'data/example_fastq.fastq',
+    'filtered_out.fastq',
+(15, 100),
+    (10, 2 ** 32)
+)
