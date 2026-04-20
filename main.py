@@ -2,94 +2,172 @@ from typing import Dict, Tuple, Union
 import os
 
 from bio_utils.bio_files_processor import convert_multiline_fasta_to_oneline
-from bio_utils.fastq import is_within_bounds, calculate_gc_content, calculate_mean_quality, read_fastq_to_dict, \
-    write_fastq
 from bio_utils.parse_blast_output import parse_blast_output
+from abc import ABC, abstractmethod
+from typing import Iterator
+from Bio import SeqIO
+from Bio.SeqUtils import gc_fraction
 
-from bio_utils.rna_dna_utils import is_nucleic_acid, transcribe, reverse, complement, reverse_complement
+class BiologicalSequence(ABC):
+    """
+    Abstract base class for biological sequences.
+    Fixes the common interface.
+    """
 
+    def __init__(self, sequence: str):
+        self._sequence = sequence.upper()
+        self._check_alphabet()
 
-def run_dna_rna_tools(*args):
-    if not args or len(args) < 2:
-        raise Exception("Input error")
-    sequences = args[:-1]
-    procedure = args[-1]
+    def __len__(self) -> int:
+        return len(self._sequence)
 
-    procedure_map = {
-        "is_nucleic_acid": is_nucleic_acid,
-        "transcribe": transcribe,
-        "reverse": reverse,
-        "complement": complement,
-        "reverse_complement": reverse_complement,
+    def __getitem__(self, item):
+        """
+        Supports indexing and slicing.
+        """
+        return self.__class__(self._sequence[item])
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._sequence)
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__}({self._sequence})"
+
+    @abstractmethod
+    def _check_alphabet(self) -> None:
+        """
+        Checks that the sequence alphabet is valid.
+        """
+        pass
+
+class NucleicAcidSequence(BiologicalSequence, ABC):
+    """
+    Abstract class for DNA and RNA sequences.
+    """
+
+    _alphabet: set[str]
+    _complement_map: dict[str, str]
+
+    def complement(self):
+        """
+        Returns complementary sequence.
+        """
+        if not hasattr(self, "_complement_map"):
+            raise NotImplementedError
+
+        return self.__class__(
+            "".join(self._complement_map[n] for n in self._sequence)
+        )
+
+    def reverse(self):
+        """
+        Returns reversed sequence.
+        """
+        return self.__class__(self._sequence[::-1])
+
+    def reverse_complement(self):
+        """
+        Returns reverse-complement sequence.
+        """
+        return self.complement().reverse()
+
+    def _check_alphabet(self) -> None:
+        invalid = set(self._sequence) - self._alphabet
+        if invalid:
+            raise ValueError(f"Invalid characters: {invalid}")
+        
+class DNASequence(NucleicAcidSequence):
+    """
+    DNA sequence.
+    """
+
+    _alphabet = {"A", "T", "G", "C"}
+    _complement_map = {
+        "A": "T",
+        "T": "A",
+        "G": "C",
+        "C": "G",
     }
 
-    if procedure not in procedure_map:
-        raise Exception("Input error")
+    def transcribe(self):
+        """
+        Transcribes DNA to RNA.
+        """
+        return RNASequence(self._sequence.replace("T", "U"))
+    
+class RNASequence(NucleicAcidSequence):
+    """
+    RNA sequence.
+    """
 
-    results = [procedure_map[procedure](sequence) for sequence in sequences]
-    return results[0] if len(results) == 1 else results
+    _alphabet = {"A", "U", "G", "C"}
+    _complement_map = {
+        "A": "U",
+        "U": "A",
+        "G": "C",
+        "C": "G",
+    }
 
+class AminoAcidSequence(BiologicalSequence):
+    """
+    Amino acid (protein) sequence.
+    """
 
+    _alphabet = set("ACDEFGHIKLMNPQRSTVWY")
+
+    def molecular_weight(self) -> int:
+        """
+        Returns approximate molecular weight.
+        """
+        return len(self._sequence) * 110
+
+    def _check_alphabet(self) -> None:
+        invalid = set(self._sequence) - self._alphabet
+        if invalid:
+            raise ValueError(f"Invalid amino acids: {invalid}")
+        
 def filter_fastq(
-        input_fastq: str,
-        output_fastq: str,
-        gc_bounds: Union[float, Tuple[float, float]] = (0, 100),
-        length_bounds: Union[int, Tuple[int, int]] = (0, 2 ** 32),
-        quality_threshold: float = 0
+    input_fastq: str,
+    output_fastq: str,
+    gc_bounds: tuple[float, float] = (0.0, 1.0),
+    length_bounds: tuple[int, int] = (0, 2**32),
+    quality_threshold: float = 0.0,
 ) -> None:
     """
-    Filters FASTQ sequences based on GC content, length, and quality thresholds.
+    Filters FASTQ reads using Biopython.
 
-    Arguments:
-        seqs: Dictionary of sequences {name: (sequence, quality)}.
-        gc_bounds: GC content range in percentage (single number or tuple).
-        length_bounds: Sequence length range (single number or tuple).
-        quality_threshold: Minimum average Phred33 quality score.
-
-    Returns:
-        Dictionary with filtered sequences.
+    Parameters:
+        input_fastq: path to input FASTQ file
+        output_fastq: path to output FASTQ file
+        gc_bounds: allowed GC fraction range (0–1)
+        length_bounds: allowed read length range
+        quality_threshold: minimal mean Phred quality
     """
 
-    # Create filtered directory if it doesn't exist
-    output_dir = "filtered"
-    os.makedirs(output_dir, exist_ok=True)
+    passed_records = []
 
-    output_path = os.path.join(output_dir, output_fastq)
+    for record in SeqIO.parse(input_fastq, "fastq"):
+        seq_length = len(record.seq)
+        gc = gc_fraction(record.seq)
+        qualities = record.letter_annotations["phred_quality"]
+        mean_quality = sum(qualities) / len(qualities)
 
-    # Read FASTQ file into dictionary
-    seqs = read_fastq_to_dict(input_fastq)
-
-    filtered_seqs = {}
-
-    for name, (seq, qual) in seqs.items():
-        # Check sequence length
-        seq_length = len(seq)
-        if not is_within_bounds(seq_length, length_bounds):
+        if not (length_bounds[0] <= seq_length <= length_bounds[1]):
             continue
-
-        # Check GC content
-        gc_content = calculate_gc_content(seq)
-        if not is_within_bounds(gc_content, gc_bounds):
+        if not (gc_bounds[0] <= gc <= gc_bounds[1]):
             continue
-
-        # Check mean quality
-        mean_quality = calculate_mean_quality(qual)
         if mean_quality < quality_threshold:
             continue
 
-        # If all checks pass, add to result
-        filtered_seqs[name] = (seq, qual)
+        passed_records.append(record)
 
-    write_fastq(
-        output_path, filtered_seqs
-    )
-
+    SeqIO.write(passed_records, output_fastq, "fastq")
 
 filter_fastq(
-    'data/example_fastq.fastq',
-    'filtered_out.fastq',
-    (15, 100),
-    (10, 2 ** 32)
+    input_fastq="data/example_fastq.fastq",
+    output_fastq="filtered_out.fastq",
+    gc_bounds=(0.15, 1.0),
+    length_bounds=(10, 2**32),
 )
 
 convert_multiline_fasta_to_oneline(
