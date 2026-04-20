@@ -1,0 +1,4 @@
+2026-04-20 21:13:50,997 - INFO - Command received: fastq
+2026-04-20 21:13:50,998 - INFO - Running FASTQ filtering: data/example_fastq.fastq -> logs/test_output.fastq
+2026-04-20 21:13:51,002 - INFO - Total reads passed filter: 89
+2026-04-20 21:13:51,003 - INFO - Total reads passed filter: 89
